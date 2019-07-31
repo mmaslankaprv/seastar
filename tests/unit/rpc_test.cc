@@ -19,8 +19,6 @@
  * Copyright (C) 2016 ScyllaDB
  */
 
-#include <random>
-
 #include "loopback_socket.hh"
 #include <seastar/rpc/rpc.hh>
 #include <seastar/rpc/rpc_types.hh>
@@ -29,6 +27,7 @@
 #include <seastar/rpc/multi_algo_compressor_factory.hh>
 #include <seastar/testing/test_case.hh>
 #include <seastar/testing/thread_test_case.hh>
+#include <seastar/testing/test_runner.hh>
 #include <seastar/core/thread.hh>
 #include <seastar/core/sleep.hh>
 #include <seastar/util/defer.hh>
@@ -336,6 +335,15 @@ future<stream_test_result> stream_test_func(test_rpc_proto& proto, make_socket_f
                         r.server_sum += std::get<0>(*data);
                     } else {
                         r.server_source_closed = true;
+                        try {
+                          // check that reading after eos does not crash
+                          // and throws correct exception
+                           source().get();
+                        } catch (rpc::stream_closed& ex) {
+                          // expected
+                        } catch (...) {
+                           BOOST_FAIL("wrong exception on reading from a stream after eos");
+                        }
                     }
                 }
             });
@@ -604,7 +612,7 @@ void test_compressor(std::function<std::unique_ptr<seastar::rpc::compressor>()> 
 
     std::vector<std::tuple<sstring, size_t, snd_buf>> inputs;
 
-    auto eng = std::default_random_engine{std::random_device{}()};
+    auto& eng = testing::local_random_engine;
     auto dist = std::uniform_int_distribution<char>();
 
     auto snd = snd_buf(1);

@@ -431,8 +431,8 @@ constexpr std::chrono::milliseconds lowres_clock_impl::_granularity;
 constexpr unsigned reactor::max_queues;
 constexpr unsigned reactor::max_aio_per_queue;
 
-// Broken in Linux < 5.1, fix is a89afe58f1a74aac768a5eb77af95ef4ee15beaa
-static bool aio_nowait_supported = kernel_uname().whitelisted({"5.1", "5.0.8", "4.19.35", "4.14.112"});
+// Broken (returns spurious EIO). Cause/fix unknown.
+static bool aio_nowait_supported = false;
 
 static bool sched_debug() {
     return false;
@@ -468,6 +468,46 @@ void lowres_clock_impl::update() {
     counters::_steady_now.store(steady_count, std::memory_order_relaxed);
     counters::_system_now.store(system_count, std::memory_order_relaxed);
 }
+
+template <typename Clock>
+inline
+timer<Clock>::~timer() {
+    if (_queued) {
+        engine().del_timer(this);
+    }
+}
+
+template <typename Clock>
+inline
+void timer<Clock>::arm(time_point until, compat::optional<duration> period) {
+    arm_state(until, period);
+    engine().add_timer(this);
+}
+
+template <typename Clock>
+inline
+void timer<Clock>::readd_periodic() {
+    arm_state(Clock::now() + _period.value(), {_period.value()});
+    engine().queue_timer(this);
+}
+
+template <typename Clock>
+inline
+bool timer<Clock>::cancel() {
+    if (!_armed) {
+        return false;
+    }
+    _armed = false;
+    if (_queued) {
+        engine().del_timer(this);
+        _queued = false;
+    }
+    return true;
+}
+
+template class timer<steady_clock_type>;
+template class timer<lowres_clock>;
+template class timer<manual_clock>;
 
 class thread_pool {
     reactor* _reactor;
@@ -4651,6 +4691,13 @@ smp_message_queue::lf_queue::maybe_wakeup() {
     }
 }
 
+smp_message_queue::lf_queue::~lf_queue() {
+    consume_all([] (work_item* ptr) {
+        delete ptr;
+    });
+}
+
+
 template<size_t PrefetchCnt, typename Func>
 size_t smp_message_queue::process_queue(lf_queue& q, Func process) {
     // copy batch to local memory in order to minimize
@@ -4799,11 +4846,11 @@ future<size_t> readable_eventfd::wait() {
     });
 }
 
-void schedule(std::unique_ptr<task> t) {
+void schedule(std::unique_ptr<task>&& t) noexcept {
     engine().add_task(std::move(t));
 }
 
-void schedule_urgent(std::unique_ptr<task> t) {
+void schedule_urgent(std::unique_ptr<task>&& t) noexcept {
     engine().add_urgent_task(std::move(t));
 }
 
@@ -5613,11 +5660,34 @@ void engine_exit(std::exception_ptr eptr) {
     engine().exit(1);
 }
 
-void report_failed_future(std::exception_ptr eptr) {
+void report_failed_future(const std::exception_ptr& eptr) noexcept {
     seastar_logger.warn("Exceptional future ignored: {}, backtrace: {}", eptr, current_backtrace());
 }
 
 broken_promise::broken_promise() : logic_error("broken promise") { }
+
+promise_base::promise_base(promise_base&& x) noexcept
+    : _future(x._future), _state(x._state), _task(std::move(x._task)) {
+    x._state = nullptr;
+    if (auto* fut = _future) {
+        fut->detach_promise();
+        fut->_promise = this;
+    }
+}
+
+void promise_base::check_during_destruction() noexcept {
+    if (_future) {
+        assert(_state);
+        assert(_state->available() || !_task);
+        _future->detach_promise();
+    } else if (_state && _state->failed()) {
+        report_failed_future(_state->get_exception());
+    } else if (__builtin_expect(bool(_task), false)) {
+        assert(_state && !_state->available());
+        _state->set_to_broken_promise();
+        ::seastar::schedule(std::move(_task));
+    }
+}
 
 void future_state_base::set_to_broken_promise() noexcept {
     try {
