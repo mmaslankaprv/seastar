@@ -22,6 +22,7 @@
 #pragma once
 
 #include <boost/intrusive/slist.hpp>
+#include <cstdint>
 #include <seastar/core/shared_ptr.hh>
 #include <seastar/core/circular_buffer.hh>
 #include <atomic>
@@ -44,15 +45,15 @@ class fair_group_rover;
 ///
 /// \related fair_queue
 class fair_queue_ticket {
-    uint32_t _weight = 0; ///< the total weight of these requests for capacity purposes (IOPS).
-    uint32_t _size = 0;        ///< the total effective size of these requests
+    uint64_t _weight = 0; ///< the total weight of these requests for capacity purposes (IOPS).
+    uint64_t _size = 0;        ///< the total effective size of these requests
     friend class fair_group_rover;
 public:
     /// Constructs a fair_queue_ticket with a given \c weight and a given \c size
     ///
     /// \param weight the weight of the request
     /// \param size the size of the request
-    fair_queue_ticket(uint32_t weight, uint32_t size) noexcept;
+    fair_queue_ticket(uint64_t weight, uint64_t size) noexcept;
     fair_queue_ticket() noexcept {}
     fair_queue_ticket operator+(fair_queue_ticket desc) const noexcept;
     fair_queue_ticket operator-(fair_queue_ticket desc) const noexcept;
@@ -93,11 +94,11 @@ public:
 };
 
 class fair_group_rover {
-    uint32_t _weight = 0;
-    uint32_t _size = 0;
+    uint64_t _weight = 0;
+    uint64_t _size = 0;
 
 public:
-    fair_group_rover(uint32_t weight, uint32_t size) noexcept;
+    fair_group_rover(uint64_t weight, uint64_t size) noexcept;
 
     /*
      * For both dimentions checks if the current rover is ahead of the
@@ -133,22 +134,22 @@ public:
 /// \cond internal
 class priority_class {
     friend class fair_queue;
-    uint32_t _shares = 0;
+    uint64_t _shares = 0;
     float _accumulated = 0;
     fair_queue_entry::container_list_t _queue;
     bool _queued = false;
 
     friend struct shared_ptr_no_esft<priority_class>;
-    explicit priority_class(uint32_t shares) noexcept : _shares(std::max(shares, 1u)) {}
+    explicit priority_class(uint64_t shares) noexcept : _shares(std::max<uint64_t>(shares, 1u)) {}
 
 public:
     /// \brief return the current amount of shares for this priority class
-    uint32_t shares() const noexcept {
+    uint64_t shares() const noexcept {
         return _shares;
     }
 
-    void update_shares(uint32_t shares) noexcept {
-        _shares = (std::max(shares, 1u));
+    void update_shares(uint64_t shares) noexcept {
+        _shares = (std::max<uint64_t>(shares, 1u));
     }
 };
 /// \endcond

@@ -20,6 +20,7 @@
  */
 
 #include <boost/intrusive/parent_from_member.hpp>
+#include <cstdint>
 #include <seastar/core/fair_queue.hh>
 #include <seastar/core/future.hh>
 #include <seastar/core/shared_ptr.hh>
@@ -36,11 +37,11 @@
 
 namespace seastar {
 
-static_assert(sizeof(fair_queue_ticket) == sizeof(uint64_t), "unexpected fair_queue_ticket size");
+static_assert(sizeof(fair_queue_ticket) == 2*sizeof(uint64_t), "unexpected fair_queue_ticket size");
 static_assert(sizeof(fair_queue_entry) <= 3 * sizeof(void*), "unexpected fair_queue_entry::_hook size");
 static_assert(sizeof(fair_queue_entry::container_list_t) == 2 * sizeof(void*), "unexpected priority_class::_queue size");
 
-fair_queue_ticket::fair_queue_ticket(uint32_t weight, uint32_t size) noexcept
+fair_queue_ticket::fair_queue_ticket(uint64_t weight, uint64_t size) noexcept
     : _weight(weight)
     , _size(size)
 {}
@@ -81,14 +82,14 @@ std::ostream& operator<<(std::ostream& os, fair_queue_ticket t) {
     return os << t._weight << ":" << t._size;
 }
 
-fair_group_rover::fair_group_rover(uint32_t weight, uint32_t size) noexcept
+fair_group_rover::fair_group_rover(uint64_t weight, uint64_t size) noexcept
         : _weight(weight)
         , _size(size)
 {}
 
 fair_queue_ticket fair_group_rover::maybe_ahead_of(const fair_group_rover& other) const noexcept {
-    return fair_queue_ticket(std::max<int32_t>(_weight - other._weight, 0),
-            std::max<int32_t>(_size - other._size, 0));
+    return fair_queue_ticket(std::max<int64_t>(_weight - other._weight, 0),
+            std::max<int64_t>(_size - other._size, 0));
 }
 
 fair_group_rover fair_group_rover::operator+(fair_queue_ticket t) const noexcept {
