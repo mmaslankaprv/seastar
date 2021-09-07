@@ -306,6 +306,7 @@ input_stream<CharType>::skip(uint64_t n) noexcept {
         return make_ready_future<>();
     }
     return _fd.skip(n).then([this] (temporary_buffer<CharType> buffer) {
+        _eof = buffer.empty();
         _buf = std::move(buffer);
     });
 }
